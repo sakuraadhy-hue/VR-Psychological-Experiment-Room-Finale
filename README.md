@@ -157,6 +157,7 @@ Numbers always use a dot as the decimal separator, so the file opens correctly i
 ## Demonstration video
 
 [Watch the demonstration video (Google Drive)](https://drive.google.com/file/d/11mBtSWeg66gGcRYjUdlnh5osl2c3sULh/view?usp=sharing)
+You can also find it in the repo as Demo Video.mp4.
 
 The video shows navigation, object pickup, condition switching, the sorting task, survey completion, the new row in `results.csv`, and the room reset.
 
