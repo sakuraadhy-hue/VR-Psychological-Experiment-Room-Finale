@@ -113,18 +113,18 @@ public static class ExperimentUIBuilder
             Vector2.zero, new Vector2(1100f, 400f), 52f, FontStyles.Bold, TextAlignmentOptions.Center, TextColor);
         complete.SetActive(false);
 
-        // ---------- North wall: 3D TextMeshPro digital clock ----------
+        // ---------- North wall: 3D TextMeshPro digital clock (behind the canvas) ----------
         GameObject clock = new GameObject("TimerDisplay");
         clock.transform.SetParent(root.transform, false);
-        clock.transform.position = new Vector3(0f, 3.25f, NorthWallZ - 0.02f);
-        CreateCube("Board", clock.transform, Vector3.zero, new Vector3(1.8f, 0.65f, 0.04f), boardMat, false);
+        clock.transform.position = new Vector3(0f, 2.05f, NorthWallZ - 0.02f);
+        CreateCube("Board", clock.transform, Vector3.zero, new Vector3(2.0f, 1.0f, 0.04f), boardMat, false);
 
         TextMeshPro timerText = Create3DText("TimerText", clock.transform, "00:00.0",
-            new Vector3(0f, 0.07f, -0.025f), new Vector2(1.6f, 0.38f), 12f, new Color(0.35f, 1f, 0.55f), FontStyles.Bold);
+            new Vector3(0f, 0.12f, -0.025f), new Vector2(1.8f, 0.55f), 15f, new Color(0.35f, 1f, 0.55f), FontStyles.Bold);
         FreezeAutoSize(timerText, "01:00.0");
 
         TextMeshPro scoreText = Create3DText("ScoreText", clock.transform, "Score: 0  |  Errors: 0",
-            new Vector3(0f, -0.22f, -0.025f), new Vector2(1.6f, 0.14f), 6f, TextColor, FontStyles.Normal);
+            new Vector3(0f, -0.3f, -0.025f), new Vector2(1.8f, 0.2f), 8f, TextColor, FontStyles.Normal);
         FreezeAutoSize(scoreText, "Score: 00  |  Errors: 00");
 
         // ---------- North wall: START button ----------
@@ -165,6 +165,8 @@ public static class ExperimentUIBuilder
         UnityEventTools.AddPersistentListener(resetButton.onPressed, manager.ResetExperiment);
 
         // ---------- Wire the manager ----------
+        manager.participantCanvas = canvas.gameObject;
+        manager.startButtonMount = startMount;
         manager.briefingPanel = briefing;
         manager.surveyPanel = survey;
         manager.completePanel = complete;
@@ -185,28 +187,185 @@ public static class ExperimentUIBuilder
 
         // ---------- Scene references (stored on the scene instance, not in the prefab) ----------
         // A prefab asset cannot point to objects in a scene, so these are assigned after saving.
-        manager.sortingStation = Object.FindFirstObjectByType<SortingStation>(FindObjectsInactive.Include);
-        manager.neutralObjects = FindSceneObjects(root.transform, "NeutralSet", "Environment_Neutral");
-        manager.calmObjects = FindSceneObjects(root.transform, "CalmSet", "Environment_Calm");
-        manager.stressObjects = FindSceneObjects(root.transform, "StressSet", "Environment_Stress", "Stress_ColdLight");
-        PrefabUtility.RecordPrefabInstancePropertyModifications(manager);
+        WireSceneReferences(manager);
 
         EditorSceneManager.MarkSceneDirty(root.scene);
         Selection.activeGameObject = root;
 
         // ---------- Report ----------
-        string report =
-            "ExperimentUI created and saved to " + PrefabPath + ".\n\n" +
+        string report = "ExperimentUI created and saved to " + PrefabPath + ".\n\n" +
+                        DescribeWiring(manager) + "\n\n" +
+                        "Missing condition objects can be dragged into the ExperimentManager lists later. " +
+                        "Remember to save the scene.";
+        Debug.Log("[ExperimentUIBuilder] " + report);
+        EditorUtility.DisplayDialog("Experiment UI built", report, "OK");
+    }
+
+    // =====================================================================
+    //  Environment sets (Member A) -> researcher buttons
+    // =====================================================================
+
+    private static readonly string[] SetNames = { "NeutralSet", "CalmSet", "StressSet" };
+
+    /// Tools > Experiment > Connect Environment Sets
+    /// Places Member A's NeutralSet / CalmSet / StressSet prefabs in the open scene (if missing),
+    /// repairs objects that still use Unity's built-in Default-Material (pink in URP),
+    /// removes the old stand-alone Stress_ColdLight (StressSet has its own),
+    /// sets up Member A's EnvironmentManager with the three sets and the daylight,
+    /// and connects it to the ExperimentManager so the wall buttons (and keys 1/2/3) switch the sets.
+    [MenuItem("Tools/Experiment/Connect Environment Sets")]
+    public static void ConnectEnvironmentSets()
+    {
+        ExperimentManager manager = Object.FindFirstObjectByType<ExperimentManager>(FindObjectsInactive.Include);
+        if (manager == null)
+        {
+            EditorUtility.DisplayDialog("No ExperimentUI in the scene",
+                "Open MainExperiment and run Tools > Experiment > Build Experiment UI first.", "OK");
+            return;
+        }
+
+        List<string> log = new List<string>();
+        Scene scene = manager.gameObject.scene;
+
+        // 1. Repair pink objects inside the set prefabs.
+        Material light = GetOrCreateMaterial("Env_LightGrey", new Color(0.85f, 0.85f, 0.82f), "Assets/Materials/Environment");
+        Material dark  = GetOrCreateMaterial("Env_Black",     new Color(0.05f, 0.05f, 0.05f), "Assets/Materials/Environment");
+        foreach (string setName in SetNames)
+        {
+            int fixedCount = FixDefaultMaterials(PrefabFolder + "/" + setName + ".prefab", light, dark);
+            if (fixedCount > 0) log.Add($"{setName}: repaired {fixedCount} pink object(s)");
+        }
+
+        // 2. Put each set in the scene if it is not there yet (prefab keeps its own position).
+        foreach (string setName in SetNames)
+        {
+            if (FindSceneObjects(manager.transform, setName).Length > 0) continue;
+
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabFolder + "/" + setName + ".prefab");
+            if (prefab == null) { log.Add($"{setName}: prefab NOT FOUND in {PrefabFolder}"); continue; }
+
+            GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, scene);
+            Undo.RegisterCreatedObjectUndo(instance, "Add " + setName);
+            log.Add($"{setName}: added to the scene");
+        }
+
+        // 3. The old Stress_ColdLight placed directly in the scene is replaced by the lights inside StressSet.
+        if (FindSceneObjects(manager.transform, "StressSet").Length > 0)
+        {
+            foreach (GameObject go in FindSceneObjects(manager.transform, "Stress_ColdLight"))
+            {
+                if (go.transform.root.name == "StressSet") continue; // part of the set: keep it
+                Undo.DestroyObjectImmediate(go);
+                log.Add("Removed the old stand-alone Stress_ColdLight (StressSet has its own)");
+            }
+        }
+
+        // 4. Member A's EnvironmentManager does the actual switching. Create it if the scene has none,
+        //    and point it at the three sets and the daylight.
+        EnvironmentManager env = Object.FindFirstObjectByType<EnvironmentManager>(FindObjectsInactive.Include);
+        if (env == null)
+        {
+            GameObject go = new GameObject("EnvironmentManager");
+            SceneManager.MoveGameObjectToScene(go, scene);
+            Undo.RegisterCreatedObjectUndo(go, "Add EnvironmentManager");
+            env = go.AddComponent<EnvironmentManager>();
+            log.Add("EnvironmentManager: added to the scene");
+        }
+        SerializedObject envData = new SerializedObject(env);
+        envData.FindProperty("neutralSet").objectReferenceValue = FirstOrNull(FindSceneObjects(manager.transform, "NeutralSet"));
+        envData.FindProperty("calmSet").objectReferenceValue    = FirstOrNull(FindSceneObjects(manager.transform, "CalmSet"));
+        envData.FindProperty("stressSet").objectReferenceValue  = FirstOrNull(FindSceneObjects(manager.transform, "StressSet"));
+        envData.FindProperty("mainDirectionalLight").objectReferenceValue = FindMainDirectionalLight(manager.transform);
+        envData.ApplyModifiedProperties(); // records Undo and marks the scene dirty
+
+        // 5. Connect everything to the buttons (they call EnvironmentManager through the ExperimentManager).
+        Undo.RecordObject(manager, "Connect environment sets");
+        WireSceneReferences(manager);
+        EditorSceneManager.MarkSceneDirty(scene);
+
+        string report = (log.Count > 0 ? string.Join("\n", log) + "\n\n" : "") + DescribeWiring(manager) +
+                        "\n\nSave the scene (Cmd/Ctrl + S), then press Play and try the NEUTRAL / CALM / STRESS buttons.";
+        Debug.Log("[ExperimentUIBuilder] " + report);
+        EditorUtility.DisplayDialog("Environment sets connected", report, "OK");
+    }
+
+    /// Fills the ExperimentManager's scene references: sorting station, the objects of each
+    /// condition, and the main Directional Light (switched off in the Stress condition).
+    private static void WireSceneReferences(ExperimentManager manager)
+    {
+        Transform ui = manager.transform;
+        manager.sortingStation = Object.FindFirstObjectByType<SortingStation>(FindObjectsInactive.Include);
+        manager.neutralObjects = FindSceneObjects(ui, "NeutralSet", "Environment_Neutral");
+        manager.calmObjects    = FindSceneObjects(ui, "CalmSet", "Environment_Calm");
+        manager.stressObjects  = FindSceneObjects(ui, "StressSet", "Environment_Stress", "Stress_ColdLight");
+        manager.mainDirectionalLight = FindMainDirectionalLight(ui);
+        manager.environmentManager = Object.FindFirstObjectByType<EnvironmentManager>(FindObjectsInactive.Include);
+        PrefabUtility.RecordPrefabInstancePropertyModifications(manager);
+    }
+
+    private static GameObject FirstOrNull(GameObject[] objects)
+    {
+        return objects.Length > 0 ? objects[0] : null;
+    }
+
+    /// The scene's directional light (the "sun"), ignoring lights that belong to an environment set.
+    private static Light FindMainDirectionalLight(Transform exclude)
+    {
+        Light best = null;
+        foreach (Light l in Object.FindObjectsByType<Light>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (l.type != LightType.Directional || l.transform.IsChildOf(exclude)) continue;
+            if (System.Array.IndexOf(SetNames, l.transform.root.name) >= 0) continue;
+            if (best == null || l.name == "Directional Light") best = l;
+        }
+        return best;
+    }
+
+    /// Replaces Unity's built-in Default-Material (shown pink in URP) on every renderer of a prefab.
+    /// Clock hands get the dark material; everything else gets the light one. Returns how many were fixed.
+    private static int FixDefaultMaterials(string prefabPath, Material light, Material dark)
+    {
+        if (AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) == null) return 0;
+
+        GameObject root = PrefabUtility.LoadPrefabContents(prefabPath);
+        int fixedCount = 0;
+        foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
+        {
+            Material[] mats = r.sharedMaterials;
+            bool changed = false;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                Material m = mats[i];
+                bool builtinDefault = m != null && m.name == "Default-Material" &&
+                                      AssetDatabase.GetAssetPath(m) == "Resources/unity_builtin_extra";
+                if (!builtinDefault) continue;
+
+                string n = r.name.ToLowerInvariant();
+                bool isHand = n.Contains("hour") || n.Contains("minute") || n.Contains("second");
+                mats[i] = isHand ? dark : light;
+                changed = true;
+            }
+            if (changed) { r.sharedMaterials = mats; fixedCount++; }
+        }
+
+        if (fixedCount > 0) PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+        PrefabUtility.UnloadPrefabContents(root);
+        return fixedCount;
+    }
+
+    private static string DescribeWiring(ExperimentManager manager)
+    {
+        return
             "Sorting station: " + (manager.sortingStation != null
                 ? manager.sortingStation.name + (manager.sortingStation.gameObject.activeInHierarchy ? "" : " (INACTIVE - activate it!)")
                 : "NOT FOUND") + "\n" +
             "Neutral objects: " + Describe(manager.neutralObjects) + "\n" +
             "Calm objects: " + Describe(manager.calmObjects) + "\n" +
-            "Stress objects: " + Describe(manager.stressObjects) + "\n\n" +
-            "Missing condition objects can be dragged into the ExperimentManager lists later. " +
-            "Remember to save the scene.";
-        Debug.Log("[ExperimentUIBuilder] " + report);
-        EditorUtility.DisplayDialog("Experiment UI built", report, "OK");
+            "Stress objects: " + Describe(manager.stressObjects) + "\n" +
+            "Sunlight (off in Stress): " + (manager.mainDirectionalLight != null ? manager.mainDirectionalLight.name : "none found") + "\n" +
+            "EnvironmentManager: " + (manager.environmentManager != null
+                ? "connected (buttons and keys 1/2/3 switch the sets through it)"
+                : "none - the buttons switch the object lists directly");
     }
 
     // =====================================================================
@@ -445,16 +604,19 @@ public static class ExperimentUIBuilder
         return button;
     }
 
-    private static Material GetOrCreateMaterial(string name, Color color)
+    /// Loads a URP Lit material from the folder, or creates it with the given colour if it does not exist.
+    private static Material GetOrCreateMaterial(string name, Color color, string folder = MaterialFolder)
     {
-        if (!AssetDatabase.IsValidFolder(MaterialFolder))
+        // Create the folder (and its parents) if needed, e.g. Assets/Materials/UI.
+        string current = "Assets";
+        foreach (string part in folder.Substring("Assets/".Length).Split('/'))
         {
-            if (!AssetDatabase.IsValidFolder("Assets/Materials"))
-                AssetDatabase.CreateFolder("Assets", "Materials");
-            AssetDatabase.CreateFolder("Assets/Materials", "UI");
+            if (!AssetDatabase.IsValidFolder(current + "/" + part))
+                AssetDatabase.CreateFolder(current, part);
+            current += "/" + part;
         }
 
-        string path = MaterialFolder + "/" + name + ".mat";
+        string path = folder + "/" + name + ".mat";
         Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
         if (material != null) return material;
 

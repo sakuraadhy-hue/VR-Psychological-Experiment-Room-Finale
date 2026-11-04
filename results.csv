@@ -1,5 +1,5 @@
 ParticipantID,Condition,Score,Errors,TimeRemaining,StressRating,FocusRating,ComfortRating,Timestamp
-P001,Neutral,2,0,0.0,3,3,4,2026-10-19 18:25:40
-P002,Calm,4,0,0.0,5,5,5,2026-10-19 18:27:22
-P003,Stress,13,0,0.0,4,4,4,2026-10-19 18:29:32
-P004,Neutral,15,0,12.0,5,4,2,2026-10-19 18:34:26
+P001,Neutral,13,0,0.0,3,4,5,2026-11-01 13:48:45
+P002,Neutral,15,0,18.2,2,4,2,2026-11-01 13:58:33
+P003,Stress,15,0,34.3,2,2,2,2026-11-01 13:59:30
+P004,Calm,15,0,19.2,5,5,5,2026-11-01 14:00:27

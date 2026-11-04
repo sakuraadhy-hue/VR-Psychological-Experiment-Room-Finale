@@ -30,6 +30,13 @@ public class ExperimentManager : MonoBehaviour
     public float trialDuration = 60f;
 
     [Header("Environment conditions (Member A)")]
+    [Tooltip("Member A's EnvironmentManager. When set, it switches the Neutral/Calm/Stress sets and the " +
+             "daylight; the object lists below are only used as a fallback when it is missing.")]
+    public EnvironmentManager environmentManager;
+
+    [Tooltip("Keys 1 / 2 / 3 select Neutral / Calm / Stress (researcher shortcut, only before a trial starts).")]
+    public bool keyboardShortcuts = true;
+
     [Tooltip("Objects that are active ONLY in the Neutral condition (e.g. NeutralSet).")]
     public GameObject[] neutralObjects;
 
@@ -38,6 +45,10 @@ public class ExperimentManager : MonoBehaviour
 
     [Tooltip("Objects that are active ONLY in the Stress condition (e.g. StressSet / Environment_Stress).")]
     public GameObject[] stressObjects;
+
+    [Tooltip("The scene's main Directional Light. It is switched off in the Stress condition, so the room " +
+             "is lit only by the cold flickering lights (same rule as Member A's EnvironmentManager).")]
+    public Light mainDirectionalLight;
 
     [Header("Participant panels (world-space canvas)")]
     [Tooltip("The whole participant canvas. Hidden during the trial so the 3D clock behind it is visible.")]
@@ -52,6 +63,10 @@ public class ExperimentManager : MonoBehaviour
     public TMP_Text completeMessage;
 
     [Header("3D TextMeshPro displays")]
+    [Tooltip("The clock board behind the canvas. Shown only while the trial runs, so it never shows " +
+             "through the instructions or the survey. Found automatically by name if left empty.")]
+    public GameObject timerDisplay;
+
     public TMP_Text timerText;
     public TMP_Text scoreText;
     public TMP_Text researcherStatusText;
@@ -92,6 +107,18 @@ public class ExperimentManager : MonoBehaviour
             sortingStation = FindFirstObjectByType<SortingStation>(FindObjectsInactive.Include);
         if (dataLogger == null)
             dataLogger = GetComponent<DataLogger>();
+        if (environmentManager == null)
+            environmentManager = FindFirstObjectByType<EnvironmentManager>(FindObjectsInactive.Include);
+        if (timerDisplay == null)
+        {
+            Transform clock = transform.Find("TimerDisplay");
+            if (clock != null) timerDisplay = clock.gameObject;
+        }
+
+        // The 1/2/3 keys are handled here instead of in EnvironmentManager, so a key press
+        // goes through the same checks as the panel buttons (locked during a trial, logged in the CSV).
+        if (environmentManager != null)
+            environmentManager.keyboardShortcuts = false;
 
         if (sortingStation == null)
             Debug.LogWarning("[ExperimentManager] No SortingStation found in the scene.");
@@ -124,6 +151,14 @@ public class ExperimentManager : MonoBehaviour
 
     void Update()
     {
+        // Researcher keyboard shortcut: 1 / 2 / 3 = Neutral / Calm / Stress (same as the panel buttons).
+        if (keyboardShortcuts && State == TrialState.Briefing)
+        {
+            if (Input.GetKeyDown(KeyCode.Alpha1)) SelectNeutral();
+            if (Input.GetKeyDown(KeyCode.Alpha2)) SelectCalm();
+            if (Input.GetKeyDown(KeyCode.Alpha3)) SelectStress();
+        }
+
         // The countdown only runs during a trial.
         if (State != TrialState.Running) return;
 
@@ -194,6 +229,7 @@ public class ExperimentManager : MonoBehaviour
         if (participantCanvas != null) participantCanvas.SetActive(false);
         if (startButtonMount != null) startButtonMount.SetActive(false);
         else if (startButton != null) startButton.gameObject.SetActive(false);
+        if (timerDisplay != null) timerDisplay.SetActive(true);
         SetGrabbing(true);
 
         // The researcher cannot change the condition in the middle of a trial.
@@ -223,6 +259,7 @@ public class ExperimentManager : MonoBehaviour
         // Participant UI back to the instructions screen.
         if (participantCanvas != null) participantCanvas.SetActive(true);
         if (startButtonMount != null) startButtonMount.SetActive(true);
+        if (timerDisplay != null) timerDisplay.SetActive(false);
         if (briefingPanel != null) briefingPanel.SetActive(true);
         if (surveyPanel != null) surveyPanel.Hide();
         if (completePanel != null) completePanel.SetActive(false);
@@ -251,7 +288,8 @@ public class ExperimentManager : MonoBehaviour
         State = TrialState.Survey;
         SetGrabbing(false);
 
-        // Bring the canvas back in front of the clock to show the questionnaire.
+        // Hide the clock and bring the canvas back to show the questionnaire.
+        if (timerDisplay != null) timerDisplay.SetActive(false);
         if (participantCanvas != null) participantCanvas.SetActive(true);
         if (surveyPanel != null) surveyPanel.Show();
 
@@ -305,9 +343,27 @@ public class ExperimentManager : MonoBehaviour
     {
         CurrentCondition = condition;
 
-        SetObjectsActive(neutralObjects, condition == ExperimentCondition.Neutral);
-        SetObjectsActive(calmObjects,    condition == ExperimentCondition.Calm);
-        SetObjectsActive(stressObjects,  condition == ExperimentCondition.Stress);
+        if (environmentManager != null)
+        {
+            // Member A's EnvironmentManager switches the sets and the daylight.
+            switch (condition)
+            {
+                case ExperimentCondition.Neutral: environmentManager.ActivateNeutral(); break;
+                case ExperimentCondition.Calm:    environmentManager.ActivateCalm();    break;
+                case ExperimentCondition.Stress:  environmentManager.ActivateStress();  break;
+            }
+        }
+        else
+        {
+            // Fallback without an EnvironmentManager: switch the object lists directly.
+            SetObjectsActive(neutralObjects, condition == ExperimentCondition.Neutral);
+            SetObjectsActive(calmObjects,    condition == ExperimentCondition.Calm);
+            SetObjectsActive(stressObjects,  condition == ExperimentCondition.Stress);
+
+            // Daylight on for Neutral and Calm, off for Stress (darker, harsher room).
+            if (mainDirectionalLight != null)
+                mainDirectionalLight.enabled = condition != ExperimentCondition.Stress;
+        }
 
         // The selected condition button stays pushed in, like a physical selector switch.
         if (neutralButton != null) neutralButton.SetLatched(condition == ExperimentCondition.Neutral);
